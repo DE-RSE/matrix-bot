@@ -16,13 +16,13 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 __author__ = "Frank Löffler"
 __contact__ = "frank.loeffler@uni-jena.de"
-__copyright__ = "Copyright 2024, Frank Löffler; 2024 Friedrich-Schiller-Universität Jena"
-__date__ = "2024-08-02"
+__copyright__ = "Copyright 2026, Frank Löffler; 2024 Friedrich-Schiller-Universität Jena"
+__date__ = "2026-07-06"
 __email__ = "frank.loeffler@uni-jena.de"
 __license__ = "AGPLv3"
 __maintainer__ = "frank.loeffler@uni-jena.de"
 __status__ = "Production"
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 import sys, argparse
 import time
