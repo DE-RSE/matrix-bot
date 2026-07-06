@@ -100,9 +100,6 @@ def parse_commandline():
 # parse the command line options
 config = parse_commandline()
 
-creds = botlib.Creds(config["matrix_host"], config["matrix_user"], config["matrix_pass"])
-bot = botlib.Bot(creds)
-
 watched_rooms = [config["space"],]
 if config['watch']:
     watched_rooms = watched_rooms + config['watch']
@@ -112,106 +109,129 @@ if config['invite']:
 space_id = None
 watched_room_ids = []
 to_invite_ids = []
+    
+creds = botlib.Creds(config["matrix_host"], config["matrix_user"], config["matrix_pass"])
 
-def room_members(room_id):
-    s = requests.Session()
-    r = s.get(f'{bot.creds.homeserver}/_matrix/client/v3/rooms/{room_id}/members?access_token={bot.creds.access_token}&membership=join')
-    if r.status_code != 200:
-        return []
-    try:
-        members = [umap['user_id'] for umap in json.loads(r.text)['chunk']]
-    except Exception as e:
-        log('room_members', repr(e), e)
-        return []
-    return members
-
-def populate_watched_room_ids():
-    global watched_room_ids, to_invite_ids, space_id
-    s = requests.Session()
-    r = s.get(f'{bot.creds.homeserver}/_matrix/client/v3/joined_rooms?access_token={bot.creds.access_token}')
-    if r.status_code != 200:
-        return []
-    try:
-        room_ids = json.loads(r.text)['joined_rooms']
-    except Exception as e:
-        log('joined rooms', repr(e), e)
-        return []
-    watched_room_ids = []
-    to_invite_ids = []
-    for room_id in room_ids:
-        r = s.get(f'{bot.creds.homeserver}/_matrix/client/v3/rooms/{room_id}/state/m.room.name?access_token={bot.creds.access_token}')
-        # rooms do not have to have a name
-        if r.status_code != 200:
-            continue
-        room_name = json.loads(r.text)['name']
-        log("subscribed to: ", room_name)
-        if room_name in watched_rooms:
-            log(f'  {len(room_members(room_id))} members')
-            watched_room_ids.append(room_id)
-        if room_name == config["space"]:
-            space_id = room_id
-        if room_name in to_invite:
-            log('  invitation target')
-            to_invite_ids.append(room_id)
-    if len(watched_rooms) != len(watched_room_ids):
-        print('Cannot find ids of all rooms I am supposed to watch. Maybe the matrix user did not join all of them or some of them do not have names set.')
-
-def user_already_known(user_id, exclude_room=None):
-    """See if a given user is already member of any watched rooms, except for the one given"""
-    for room_id in watched_room_ids:
-        if exclude_room == room_id:
-            continue
-        if user_id in room_members(room_id):
-            return True
-    return False
-
-@bot.listener.on_startup
-async def room_joined(room_id):
-    if len(watched_room_ids) == 0:
-        populate_watched_room_ids()
-        log(f'This bot is now watching rooms with the ids {watched_room_ids}')
-
-@bot.listener.on_custom_event(nio.RoomMemberEvent)
-# This is called for all events while we listen
-async def notify(room, event):
-    if event.membership == "join" and event.membership != event.prev_membership:
-        log(f'noticed a user joining room "{room.display_name}" ({room.room_id})')
-        if user_already_known(event.state_key, exclude_room=room.room_id):
-            log("   ... but user is already known, not doing anything")
-        else:
-            room_type = "room"
-            # invite into some rooms if people join space (and are not in other watched rooms)
-            if room.room_id == space_id:
-                room_type = "space"
-                s = requests.Session()
-                for to_invite_id in to_invite_ids:
-                    r = s.post(f'{bot.creds.homeserver}/_matrix/client/v3/rooms/{to_invite_id}/invite?access_token={bot.creds.access_token}', json={'user_id': event.state_key})
-            # sent an email for new users
-            if room.display_name in watched_rooms:
-                try:
-                    msg = EmailMessage()
-                    log(   f'   ... new member "{event.content["displayname"]}" ({event.state_key}) joined the matrix {room_type} {room.display_name}')
-                    msg.set_content(f'New member "{event.content["displayname"]}" ({event.state_key}) joined the matrix {room_type} {room.display_name}')
-                    msg['Subject']  = config['email_subject']
-                    msg['From']     = config['email_from']
-                    msg['To']       = config['email_to']
-                    msg['Reply-To'] = config['email_replyto']
-                    s = smtplib.SMTP(config['smtp_host'], config['smtp_port'])
-                    s.ehlo()
-                    s.starttls()
-                    s.ehlo()
-                    s.login(config['smtp_user'], config['smtp_pass'])
-                    s.sendmail(msg['From'], msg['To'], msg.as_string())
-                    log("   ... email sent")
-                    s.quit()
-                # print some info if sending the email fails, but continue listening
-                except Exception as e:
-                    log(f'Exception "{e}" caught while sending email for room {room} and event {event}')
+# test smtp now and not only once an email is actually tried to be sent
+s = smtplib.SMTP(config['smtp_host'], config['smtp_port'])
+s.ehlo()
+s.starttls()
+s.ehlo()
+s.login(config['smtp_user'], config['smtp_pass'])
+s.sendmail("matrix-support@de-rse.org", "frank.loeffler@de-rse.org", "derse-matrixcounter started up")
+s.quit()
 
 while True:
+    bot = botlib.Bot(creds)
+    def room_members(room_id):
+        s = requests.Session()
+        r = s.get(f'{bot.creds.homeserver}/_matrix/client/v3/rooms/{room_id}/members?access_token={bot.creds.access_token}&membership=join')
+        if r.status_code != 200:
+            return []
+        try:
+            members = [umap['user_id'] for umap in json.loads(r.text)['chunk']]
+        except Exception as e:
+            log('room_members', repr(e), e)
+            return []
+        return members
+    
+    def populate_watched_room_ids():
+        global watched_room_ids, to_invite_ids, space_id
+        s = requests.Session()
+        r = s.get(f'{bot.creds.homeserver}/_matrix/client/v3/joined_rooms?access_token={bot.creds.access_token}')
+        if r.status_code != 200:
+            return []
+        try:
+            room_ids = json.loads(r.text)['joined_rooms']
+        except Exception as e:
+            log('joined rooms', repr(e), e)
+            return []
+        watched_room_ids = []
+        to_invite_ids = []
+        for room_id in room_ids:
+            r = s.get(f'{bot.creds.homeserver}/_matrix/client/v3/rooms/{room_id}/state/m.room.name?access_token={bot.creds.access_token}')
+            # rooms do not have to have a name
+            if r.status_code != 200:
+                continue
+            room_name = json.loads(r.text)['name']
+            log("subscribed to: ", room_name)
+            if room_name in watched_rooms:
+                log(f'  {len(room_members(room_id))} members')
+                watched_room_ids.append(room_id)
+            if room_name == config["space"]:
+                space_id = room_id
+            if room_name in to_invite:
+                log('  invitation target')
+                to_invite_ids.append(room_id)
+        if len(watched_rooms) != len(watched_room_ids):
+            print('Cannot find ids of all rooms I am supposed to watch. Maybe the matrix user did not join all of them or some of them do not have names set.')
+    
+    def user_already_known(user_id, exclude_room=None):
+        """See if a given user is already member of any watched rooms, except for the one given"""
+        for room_id in watched_room_ids:
+            if exclude_room == room_id:
+                continue
+            if user_id in room_members(room_id):
+                return True
+        return False
+    
+    @bot.listener.on_startup
+    async def room_joined(room_id):
+        bot.async_client.event_callbacks[:] = [
+            cb for cb in bot.async_client.event_callbacks if cb.filter.__name__ != 'MegolmEvent'
+        ]
+        if len(watched_room_ids) == 0:
+            populate_watched_room_ids()
+            log(f'This bot is now watching rooms with the ids {watched_room_ids}')
+   
+    @bot.listener.on_message_event
+    async def example(room, message):
+        print('message')
+        pprint(message)
+
+    @bot.listener.on_custom_event(nio.RoomMemberEvent)
+    # This is called for all events while we listen
+    async def notify(room, event):
+        if event.membership == "join" and event.membership != event.prev_membership:
+            log(f'noticed a user joining room "{room.display_name}" ({room.room_id})')
+            if user_already_known(event.state_key, exclude_room=room.room_id):
+                log("   ... but user is already known, not doing anything")
+            else:
+                room_type = "room"
+                # invite into some rooms if people join space (and are not in other watched rooms)
+                if room.room_id == space_id:
+                    room_type = "space"
+                    s = requests.Session()
+                    for to_invite_id in to_invite_ids:
+                        r = s.post(f'{bot.creds.homeserver}/_matrix/client/v3/rooms/{to_invite_id}/invite?access_token={bot.creds.access_token}', json={'user_id': event.state_key})
+                # sent an email for new users
+                if room.display_name in watched_rooms:
+                    try:
+                        msg = EmailMessage()
+                        log(   f'   ... new member "{event.content["displayname"]}" ({event.state_key}) joined the matrix {room_type} {room.display_name}')
+                        msg.set_content(f'New member "{event.content["displayname"]}" ({event.state_key}) joined the matrix {room_type} {room.display_name}')
+                        msg['Subject']  = config['email_subject']
+                        msg['From']     = config['email_from']
+                        msg['To']       = config['email_to']
+                        msg['Reply-To'] = config['email_replyto']
+                        s = smtplib.SMTP(config['smtp_host'], config['smtp_port'])
+                        s.ehlo()
+                        s.starttls()
+                        s.ehlo()
+                        s.login(config['smtp_user'], config['smtp_pass'])
+                        s.sendmail(msg['From'], msg['To'], msg.as_string())
+                        log("   ... email sent")
+                        s.quit()
+                    # print some info if sending the email fails, but continue listening
+                    except Exception as e:
+                        log(f'Exception "{e}" caught while sending email for room {room} and event {event}')
+
     try:
         bot.run()
     except Exception as e:
-        log(f'Exception {repr(e)}: {e} caught while running bot: sleeping for 10 s and retrying')
+        log(f'Exception {repr(e)}: {e} caught while running bot: sleeping for 3 s and retrying')
         #log(traceback.format_exc())
-    time.sleep(10)
+        #log(f'Exception {repr(e)}: {e} caught while running bot: aborting')
+        #sys.exit(1)
+        del bot
+    time.sleep(3)
